@@ -108,7 +108,7 @@ Every push and pull request targeting `main` runs three paths:
 
 1. Install locked dependencies, run the Vitest suite, and create the production bundle.
 2. Scan the complete Git history with Gitleaks for committed secrets.
-3. Build the production image, verify its non-root user, smoke-test `/healthz`, and run a blocking Trivy scan.
+3. Build the production image, verify its non-root user and `/healthz` endpoint, and run a blocking Trivy scan.
 
 The workflow uses read-only repository permissions, job timeouts, concurrency cancellation, and GitHub Actions BuildKit caching. See [the workflow](.github/workflows/ci.yml).
 
