@@ -1,31 +1,23 @@
-FROM node:20-alpine
+# syntax=docker/dockerfile:1.7
 
-#create a dedicated non-root user (higher security for us)
-RUN addgroup -S app && adduser -S -G app app
+FROM node:24-alpine AS build
 
-#set working directory
 WORKDIR /app
 
-#give the empty app directory to the app user
-RUN chown app:app /app
+COPY package*.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci
 
-#switch to the non-root user immediately
-USER app
-
-#copy package files and assign ownership during the copy step
-COPY --chown=app:app package*.json ./
-
-#install exactly the versions from package-lock
-RUN npm ci
-
-#copy the rest of the source code and assign ownership during the copy
-COPY --chown=app:app . .
-
-#build the production bundle into /dist
+COPY . .
 RUN npm run build
 
-#preview server listens on this port
-EXPOSE 4173
+FROM cgr.dev/chainguard/nginx:latest AS runtime
 
-#bind to 0.0.0.0 so the server is reachable from outside the container
-CMD ["npm", "run", "preview", "--", "--host", "0.0.0.0", "--port", "4173"]
+LABEL org.opencontainers.image.title="Hardened React task board" \
+      org.opencontainers.image.description="Non-root production image for the DevBoard React application" \
+      org.opencontainers.image.source="https://github.com/vizzz40/cicd-hardened-dockerized-react-app"
+
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build --chown=65532:65532 /app/dist /usr/share/nginx/html
+
+USER 65532
+EXPOSE 8080
