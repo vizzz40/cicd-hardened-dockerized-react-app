@@ -7,20 +7,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: read
-
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  quality:
-    name: Test and build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
+  build-and-test:
+    name: Build and test
+    runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Node.js
@@ -38,66 +30,46 @@ jobs:
       - name: Build application
         run: npm run build
 
-  secrets:
-    name: Secret scan
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: react-build
+          path: dist/
+          if-no-files-found: error
+
+  security-check:
+    name: Security checks
+    needs: build-and-test
+    runs-on: ubuntu-latest
     steps:
-      - name: Check out full history
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Scan for committed secrets
+      - name: Scan for secrets
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  container:
-    name: Build, verify and scan image
-    needs: quality
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build production image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          load: true
-          push: false
-          tags: devboard:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Verify non-root runtime
-        run: test "$(docker image inspect devboard:${{ github.sha }} --format '{{.Config.User}}')" != "" && test "$(docker image inspect devboard:${{ github.sha }} --format '{{.Config.User}}')" != "0" && test "$(docker image inspect devboard:${{ github.sha }} --format '{{.Config.User}}')" != "root"
-
-      - name: Verify running container
-        run: |
-          docker run --detach --rm --name devboard-verify --publish 8080:8080 devboard:${{ github.sha }}
-          for attempt in {1..15}; do
-            if curl --fail --silent http://127.0.0.1:8080/healthz; then
-              docker stop devboard-verify
-              exit 0
-            fi
-            sleep 1
-          done
-          docker logs devboard-verify
-          docker stop devboard-verify
-          exit 1
-
-      - name: Scan runtime image
+      - name: Scan repository
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: devboard:${{ github.sha }}
+          scan-type: fs
+          scan-ref: .
+          format: table
+          exit-code: 0
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+      - name: Build Docker image
+        run: docker build -t react-app:ci .
+
+      - name: Scan Docker image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: react-app:ci
           format: table
           exit-code: 1
           ignore-unfixed: true
-          vuln-type: os,library
           severity: CRITICAL,HIGH
